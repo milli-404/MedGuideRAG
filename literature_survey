@@ -1,0 +1,136 @@
+# Literature Survey: Retrieval-Augmented Generation for Medical Guidelines
+
+This survey reviews recent research relevant to this project's approach: using
+Retrieval-Augmented Generation (RAG) to answer questions grounded in clinical
+practice guidelines. It covers why RAG is used in medicine, what the current
+research shows about its effectiveness, the datasets it draws on, and open
+problems the field hasn't solved yet.
+
+## 1. Why RAG for medicine specifically
+
+Large language models memorize facts during training, but that memorized
+knowledge can be outdated, incomplete, or simply wrong — a serious problem in
+a domain where an incorrect answer has real consequences. The core appeal of
+RAG is that it separates *what the model knows how to say* from *what it says
+it as fact*: instead of relying on memorized parameters, the model is handed
+the actual source text at question time and asked to answer strictly from it.
+This project's dataset (`epfl-llm/guidelines`) is itself part of the research
+landscape — it's the same clinical guidelines corpus assembled for training
+the Meditron family of open-source medical LLMs, comprising 46,000 guideline
+documents alongside PubMed literature (Chen et al., 2023).
+
+## 2. Key papers
+
+### Grounding Large Language Models in Clinical Evidence (Lewis et al., 2025)
+
+The closest published analogue to this project. The authors built a RAG
+system over the UK's NICE clinical guidelines and evaluated it rigorously: a
+hybrid retrieval setup tested against roughly ten thousand text chunks pulled
+from three hundred guideline documents, checked against nearly eight thousand
+queries. Retrieval quality was strong — the correct chunk ranked first over
+80% of the time, and appeared somewhere in the top ten results over 99% of
+the time. The generation side showed an even starker result: grounding
+answers in retrieved text raised faithfulness (whether an answer is actually
+supported by the source) by close to 65 percentage points for one model,
+while a non-RAG baseline scored as low as roughly one-third on the same
+faithfulness measure. The paper's conclusion is direct — RAG is a credible,
+scalable way to deploy LLMs safely in a clinical information setting, though
+the authors are careful to note that human-centered evaluation is still
+needed before real clinical deployment.
+[arXiv:2510.02967](https://arxiv.org/abs/2510.02967)
+
+### Improving LLM Applications in Biomedicine with RAG (Liu & McCoy et al., JAMIA, 2025)
+
+A systematic review and meta-analysis rather than a single system. The
+authors screened several hundred candidate studies down to twenty that
+directly compared an LLM's performance with and without RAG on biomedical
+tasks, then pooled the results statistically. The combined effect favored RAG
+by a clear margin (pooled odds ratio of 1.35), meaning the improvement isn't
+just anecdotal to a handful of demo systems — it holds up in aggregate across
+independently-run studies. The authors also proposed a set of practical
+development guidelines for teams building clinical RAG systems, and flagged
+integrating RAG directly into electronic health record workflows as a
+priority direction for future work.
+[DOI: 10.1093/jamia/ocaf008](https://doi.org/10.1093/jamia/ocaf008)
+
+### Retrieval-Augmented Generation for LLMs in Healthcare: A Systematic Review (Amugongo et al., PLOS Digital Health, 2025)
+
+A broader systematic review of how RAG has been applied across healthcare
+generally, not limited to guideline lookup. Useful for understanding the
+wider landscape this project's approach sits inside — question answering,
+summarization, and clinical decision support are all active RAG application
+areas, each with different retrieval and evaluation challenges.
+[DOI: 10.1371/journal.pdig.0000877](https://doi.org/10.1371/journal.pdig.0000877)
+
+### MEDITRON-70B: Scaling Medical Pretraining for Large Language Models (Chen et al., 2023)
+
+Not a RAG paper, but directly relevant because it's the source of this
+project's dataset. The EPFL team built open-source 7B and 70B parameter LLMs
+by continuing pretraining on a curated medical corpus: peer-reviewed PubMed
+literature plus a newly assembled set of roughly 46,000 clinical practice
+guidelines spanning multiple countries, hospitals, and international health
+organizations. This paper represents the alternative strategy to RAG — baking
+domain knowledge into model weights via continued pretraining, rather than
+retrieving it at question time. Comparing the two papers above is instructive:
+Lewis et al. found a RAG-grounded general-purpose model outperformed a
+medical-finetuned model on faithfulness, suggesting grounding may matter more
+than domain-specific training for factual reliability, though the two
+approaches are not mutually exclusive.
+[arXiv:2311.16079](https://arxiv.org/abs/2311.16079)
+
+## 3. What the research agrees on
+
+- **RAG measurably reduces hallucination** in biomedical question-answering
+  compared to an ungrounded LLM — this shows up consistently across
+  individually reported case studies and in pooled meta-analysis.
+- **Retrieval quality is the bottleneck.** Every paper above spends more
+  effort evaluating the retriever (recall, ranking accuracy) than the
+  generator — if the right chunk isn't retrieved, no amount of generation
+  quality can compensate.
+- **Chunking and embedding choices are non-trivial engineering decisions**,
+  not implementation details — the NICE guidelines paper specifically used a
+  hybrid embedding approach rather than a single dense-vector model, because
+  guideline text mixes narrative prose with structured tables and dosage
+  data that plain semantic embeddings handle poorly.
+
+## 4. Open problems (and where this project sits)
+
+- **Safety is improved, not solved.** Even well-grounded RAG systems in the
+  literature don't reach zero unsafe or incorrect responses under expert
+  clinical review — meaning production use still requires human oversight,
+  not just a good retrieval pipeline.
+- **Most published systems use larger, more curated corpora** than the small
+  sample used in this project (this repo indexes ~300 guideline documents for
+  learning purposes, versus ~300–46,000 in the research above at a much
+  larger operational scale) — retrieval quality and topic coverage would need
+  to scale up substantially for anything beyond a demo.
+- **Evaluation methodology is still maturing.** Metrics like faithfulness and
+  context precision (used via the RAGAS framework in several of these papers)
+  are becoming standard, but there's no universal benchmark yet for "is this
+  clinical RAG system safe to deploy" the way there is for, say, image
+  classification accuracy.
+
+## 5. References
+
+1. Lewis, M. et al. (2025). *Grounding Large Language Models in Clinical
+   Evidence: A Retrieval-Augmented Generation System for Querying UK NICE
+   Clinical Guidelines.* arXiv:2510.02967.
+2. Liu, S., McCoy, A. B. et al. (2025). *Improving large language model
+   applications in biomedicine with retrieval-augmented generation: a
+   systematic review, meta-analysis, and clinical development guidelines.*
+   Journal of the American Medical Informatics Association, 32(4), 605–615.
+   https://doi.org/10.1093/jamia/ocaf008
+3. Amugongo, L. M., Mascheroni, P., Brooks, S., Doering, S., & Seidel, J.
+   (2025). *Retrieval augmented generation for large language models in
+   healthcare: A systematic review.* PLOS Digital Health, 4(6), e0000877.
+   https://doi.org/10.1371/journal.pdig.0000877
+4. Chen, Z., Hernández-Cano, A., Romanou, A. et al. (2023). *MEDITRON-70B:
+   Scaling Medical Pretraining for Large Language Models.* arXiv:2311.16079.
+5. epfl-llm/guidelines dataset card, Hugging Face Hub.
+   https://huggingface.co/datasets/epfl-llm/guidelines
+
+---
+*This survey was compiled to document the research context for this project's
+architecture. It is not a substitute for reading the primary sources, and it
+should be updated as this field is moving quickly — several of these papers
+are from mid-to-late 2025.*
