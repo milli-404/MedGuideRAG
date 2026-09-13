@@ -147,3 +147,4 @@ Same logic as step 3, wrapped in a browser-based chat interface.
   alternative to Chroma for large-scale/production use.
 - **Guardrails**: add a check that refuses to answer if retrieval
   confidence is too low, instead of letting the LLM guess.
+# MedGuideRAG
