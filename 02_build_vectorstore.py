@@ -1,31 +1,18 @@
 """
-STEP 2: Build the RAG knowledge base (chunking + embeddings + vector DB).
+STEP 2 (v2): Chunk, embed, and index the corpus built by 01_extract_data.py.
 
-What this script does:
-  1. Loads the JSON files saved by 01_extract_data.py.
-  2. Splits each document into overlapping ~500-token chunks. We chunk
-     because embedding models and LLMs work better on short, focused
-     passages than on giant 20-page documents, and because retrieval
-     needs to find the *specific* paragraph that answers a question.
-  3. Converts each chunk into a vector (an "embedding") using a free,
-     open-source sentence-transformers model that runs on your own CPU
-     -- no API key or cost required for this step.
-  4. Stores all vectors in a Chroma vector database on disk, so step 3
-     can search over them instantly without recomputing anything.
+Changes from the baseline:
+  - Every chunk gets a stable chunk_id ("<doc_id>_<index>") and a chunk_index,
+    so the evaluation can check whether the RIGHT chunk was retrieved.
+  - The document's topic is stored in each chunk's metadata.
+  - The old vector store is deleted before building, so re-running never
+    leaves stale or duplicated chunks behind.
 
-Beginner notes on the key concepts:
-  - "Embedding" = a list of a few hundred numbers that represents the
-    *meaning* of a piece of text. Similar meanings -> similar numbers.
-  - "Vector search" = given a question's embedding, find the stored
-    chunks whose embeddings are numerically closest to it (cosine
-    similarity). That's how the system finds relevant medical text
-    without keyword matching.
-  - Chroma is a lightweight, file-based vector database -- perfect for
-    learning and small/medium projects. Swap it for Pinecone or a
-    hosted vector DB later if you need to scale to millions of chunks.
+Run:  python 02_build_vectorstore.py
 """
 
 import json
+import shutil
 from pathlib import Path
 
 from langchain.docstore.document import Document
@@ -36,18 +23,21 @@ from tqdm import tqdm
 
 RAW_DIR = Path(__file__).parent / "data" / "raw"
 PERSIST_DIR = Path(__file__).parent / "vectorstore"
+COLLECTION_NAME = "medical_guidelines"
 
-# A small, fast, free embedding model. 384-dimensional vectors, runs on CPU.
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
-CHUNK_SIZE = 800        # characters per chunk (roughly 150-200 words)
-CHUNK_OVERLAP = 120     # overlap so we don't cut a sentence in half between chunks
+CHUNK_SIZE = 800        # characters per chunk
+CHUNK_OVERLAP = 120     # overlap so sentences aren't cut between chunks
+BATCH_SIZE = 500
+
+REBUILD = True          # delete the existing vector store before building
 
 
 def load_documents() -> list[Document]:
     """Read every JSON file in data/raw/ into a LangChain Document."""
     documents = []
-    for path in RAW_DIR.glob("*.json"):
+    for path in sorted(RAW_DIR.glob("*.json")):
         with open(path, encoding="utf-8") as f:
             row = json.load(f)
         documents.append(
@@ -56,12 +46,24 @@ def load_documents() -> list[Document]:
                 metadata={
                     "title": row["title"],
                     "source": row["source"],
-                    "url": row["url"],
+                    "url": row.get("url") or "",
                     "doc_id": row["id"],
+                    "topic": row.get("topic", "unknown"),
                 },
             )
         )
     return documents
+
+
+def add_chunk_ids(chunks: list[Document]) -> None:
+    """Give each chunk a stable id and its position within its document."""
+    counters: dict[str, int] = {}
+    for chunk in chunks:
+        doc_id = chunk.metadata["doc_id"]
+        idx = counters.get(doc_id, 0)
+        chunk.metadata["chunk_index"] = idx
+        chunk.metadata["chunk_id"] = f"{doc_id}_{idx}"
+        counters[doc_id] = idx + 1
 
 
 def main() -> None:
@@ -77,33 +79,32 @@ def main() -> None:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
-        # Try to split on paragraph/sentence boundaries before falling
-        # back to raw character cuts.
         separators=["\n\n", "\n", ". ", " ", ""],
     )
     chunks = splitter.split_documents(documents)
+    add_chunk_ids(chunks)
     print(f"Created {len(chunks)} chunks from {len(documents)} documents.")
+
+    if REBUILD and PERSIST_DIR.exists():
+        print(f"Removing old vector store at {PERSIST_DIR}...")
+        shutil.rmtree(PERSIST_DIR)
 
     print(f"Loading embedding model '{EMBEDDING_MODEL_NAME}' "
           "(downloads once, then runs locally)...")
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
 
-    print("Embedding chunks and writing them to the Chroma vector store. "
-          "This is the slowest step -- it's doing real ML inference on "
-          "every chunk.")
-
-    # Chroma rejects a single add() call above a few thousand items, so we
-    # create an empty collection first, then insert the chunks in batches.
     vectorstore = Chroma(
         persist_directory=str(PERSIST_DIR),
         embedding_function=embeddings,
-        collection_name="medical_guidelines",
+        collection_name=COLLECTION_NAME,
     )
 
-    BATCH_SIZE = 500
+    # Insert in batches: Chroma rejects very large single add() calls.
     for i in tqdm(range(0, len(chunks), BATCH_SIZE), desc="Embedding batches"):
         batch = chunks[i : i + BATCH_SIZE]
-        vectorstore.add_documents(batch)
+        vectorstore.add_documents(
+            batch, ids=[c.metadata["chunk_id"] for c in batch]
+        )
 
     print(f"\nDone. Vector store persisted to {PERSIST_DIR}")
     print(f"Total vectors stored: {vectorstore._collection.count()}")
